@@ -57,9 +57,3 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            BUILDKIT_INLINE_CACHE=1
-          # 关键：打开详细日志
-          provenance: true
-          outputs: |
-            type=image,name=ghcr.io/${{ env.IMAGE_NAME }},push-by-digest=true,push=true
