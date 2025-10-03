@@ -1,2 +1,69 @@
-# Auto detect text files and perform LF normalization
+# Git属性配置文件 - 优化Git性能和一致性
+
+# 自动检测文本文件并标准化行尾
 * text=auto
+
+# 明确定义Go源文件
+*.go text eol=lf diff=golang
+
+# Web前端文件
+*.js text eol=lf
+*.jsx text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+*.css text eol=lf
+*.scss text eol=lf
+*.html text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Shell脚本
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Windows脚本
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制文件
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.db binary
+*.sqlite binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.pdf binary
+
+# 配置文件
+.gitignore text eol=lf
+.gitattributes text eol=lf
+.dockerignore text eol=lf
+Dockerfile text eol=lf
+Makefile text eol=lf
+makefile text eol=lf
+
+# Go模块文件
+go.mod text eol=lf diff=golang
+go.sum text eol=lf diff=golang
+
+# 导出忽略（减少归档大小）
+.gitattributes export-ignore
+.gitignore export-ignore
+.github export-ignore
+scripts/performance_test.sh export-ignore
+test_performance export-ignore
+docs export-ignore
+*.md export-ignore
