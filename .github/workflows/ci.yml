@@ -1,38 +1,40 @@
-name: ci-build-push-ghcr-and-dockerhub
+name: ci-build-push-ghcr-by-date
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    branches:
+      - main          # 仅跟踪 main 分支，可改成 master 或 dev
 
 env:
-  # 镜像基础名，ghcr.io 和 docker.io 共用
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: ${{ github.repository }}   # owner/repo
 
 jobs:
   docker:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write   # 关键：允许写 ghcr.io
+      packages: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1. 解析标签 / 生成元数据
+      # 1. 生成“日期+时间”标签，如 20251003-1532
+      - name: Generate date tag
+        id: date
+        run: echo "tag=$(date +%Y%m%d-%H%M)" >> "$GITHUB_OUTPUT"
+
+      # 2. 同时生成 latest 标签
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: |
-            ghcr.io/${{ env.IMAGE_NAME }}
-            ${{ secrets.DOCKERHUB_TOKEN != '' && env.IMAGE_NAME || '' }}  # 若未配置 DOCKERHUB_TOKEN 则跳过 docker.io
+          images: ghcr.io/${{ env.IMAGE_NAME }}
           tags: |
-            type=semver,pattern={{version}}
+            type=raw,value=${{ steps.date.outputs.tag }}
             type=raw,value=latest
 
-      # 2. 登录 ghcr.io（GITHUB_TOKEN 自带即可）
+      # 3. 登录 ghcr.io
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
@@ -40,7 +42,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 4. 多架构支持
+      # 4. 多架构
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Buildx
