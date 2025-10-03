@@ -456,3 +456,24 @@ export function exportConfig(): string {
   const token = localStorage.getItem("authToken");
   return `/api/config/export${token ? '?token=' + token : ''}`;
 }
+
+// Import Configuration
+export interface ImportConfigData {
+  providers: Provider[];
+  models: Model[];
+  model_providers: ModelWithProvider[];
+}
+
+export async function importConfig(config: ImportConfigData): Promise<{ imported_count: number; message: string }> {
+  return apiRequest<{ imported_count: number; message: string }>('/config/import', {
+    method: 'POST',
+    body: JSON.stringify(config),
+  });
+}
+
+// Clear Logs
+export async function clearLogs(days: number): Promise<{ deleted_count: number; cutoff_date: string }> {
+  return apiRequest<{ deleted_count: number; cutoff_date: string }>(`/logs/clear?days=${days}`, {
+    method: 'DELETE',
+  });
+}

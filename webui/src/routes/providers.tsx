@@ -55,7 +55,10 @@ import {
   getProviderModels,
   getAllProvidersHealth,
   batchDeleteProviders,
-  validateProviderConfig
+  validateProviderConfig,
+  exportConfig,
+  importConfig,
+  type ImportConfigData
 } from "@/lib/api";
 import type { Provider, ProviderTemplate, ProviderModel, ProviderHealth } from "@/lib/api";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -92,6 +95,9 @@ export default function ProvidersPage() {
   // 配置验证相关
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState<string | null>(null);
+  
+  // 导入配置相关
+  const [importing, setImporting] = useState(false);
   
   // 初始化表单
   const form = useForm<z.infer<typeof formSchema>>({
@@ -170,6 +176,40 @@ export default function ProvidersPage() {
 
   const copyModelName = (modelName: string) => {
     navigator.clipboard.writeText(modelName);
+  };
+
+  const copyAllModels = () => {
+    const allModelNames = filteredProviderModels.map(m => m.id).join('\n');
+    navigator.clipboard.writeText(allModelNames);
+    alert(`已复制 ${filteredProviderModels.length} 个模型名称到剪贴板`);
+  };
+
+  const handleExport = () => {
+    const downloadUrl = exportConfig();
+    window.location.href = downloadUrl;
+  };
+
+  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setImporting(true);
+    try {
+      const text = await file.text();
+      const config: ImportConfigData = JSON.parse(text);
+      
+      const result = await importConfig(config);
+      alert(`导入成功! 共导入 ${result.imported_count} 项配置`);
+      fetchProviders();
+      fetchProvidersHealth();
+    } catch (err) {
+      alert(`导入失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      console.error(err);
+    } finally {
+      setImporting(false);
+      // 清空文件输入
+      event.target.value = '';
+    }
   };
 
   const handleCreate = async (values: z.infer<typeof formSchema>) => {
@@ -314,6 +354,26 @@ export default function ProvidersPage() {
               批量删除 ({selectedIds.size})
             </Button>
           )}
+          <Button onClick={handleExport} variant="outline" className="w-full sm:w-auto">
+            导出配置
+          </Button>
+          <label htmlFor="import-config">
+            <Button
+              variant="outline"
+              className="w-full sm:w-auto cursor-pointer"
+              disabled={importing}
+              onClick={() => document.getElementById('import-config')?.click()}
+            >
+              {importing ? '导入中...' : '导入配置'}
+            </Button>
+          </label>
+          <input
+            id="import-config"
+            type="file"
+            accept=".json"
+            onChange={handleImport}
+            style={{ display: 'none' }}
+          />
           <Button onClick={openCreateDialog} className="w-full sm:w-auto">添加提供商</Button>
         </div>
       </div>
@@ -626,9 +686,9 @@ export default function ProvidersPage() {
             </DialogDescription>
           </DialogHeader>
           
-          {/* 搜索框 */}
+          {/* 搜索框和复制所有按钮 */}
           {!modelsLoading && providerModels.length > 0 && (
-            <div className="mb-4">
+            <div className="mb-4 flex gap-2">
               <Input
                 placeholder="搜索模型 ID"
                 onChange={(e) => {
@@ -636,14 +696,20 @@ export default function ProvidersPage() {
                   if (searchTerm === '') {
                     setFilteredProviderModels(providerModels);
                   } else {
-                    const filteredModels = providerModels.filter(model => 
+                    const filteredModels = providerModels.filter(model =>
                       model.id.toLowerCase().includes(searchTerm)
                     );
                     setFilteredProviderModels(filteredModels);
                   }
                 }}
-                className="w-full"
+                className="flex-1"
               />
+              <Button
+                variant="outline"
+                onClick={copyAllModels}
+              >
+                复制所有 ({filteredProviderModels.length})
+              </Button>
             </div>
           )}
           

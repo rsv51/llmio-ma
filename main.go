@@ -101,9 +101,13 @@ func main() {
 	api.POST("/providers/batch-delete", handler.BatchDeleteProviders)
 	api.POST("/models/batch-delete", handler.BatchDeleteModels)
 	
-	// Configuration validation and export
+	// Configuration validation, import and export
 	api.POST("/providers/validate", handler.ValidateProviderConfig)
 	api.GET("/config/export", handler.ExportConfig)
+	api.POST("/config/import", handler.ImportConfig)
+	
+	// Log management
+	api.DELETE("/logs/clear", handler.ClearLogs)
 
 	// System configuration
 	api.GET("/config", handler.GetSystemConfig)

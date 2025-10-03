@@ -752,3 +752,134 @@ func GetRealtimeStats(c *gin.Context) {
 	
 	common.Success(c, stats)
 }
+
+// ImportConfig 导入配置
+func ImportConfig(c *gin.Context) {
+	var config struct {
+		Providers       []models.Provider        `json:"providers"`
+		Models          []models.Model           `json:"models"`
+		ModelProviders  []models.ModelWithProvider `json:"model_providers"`
+	}
+
+	if err := c.ShouldBindJSON(&config); err != nil {
+		common.BadRequest(c, "Invalid request body: "+err.Error())
+		return
+	}
+
+	// 开始事务
+	tx := models.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	importedCount := 0
+
+	// 导入提供商
+	for _, provider := range config.Providers {
+		// 检查是否已存在同名提供商
+		var existing models.Provider
+		if err := tx.Where("name = ?", provider.Name).First(&existing).Error; err == nil {
+			// 已存在,跳过
+			continue
+		}
+
+		provider.ID = 0 // 重置ID让数据库自动生成
+		if err := tx.Create(&provider).Error; err != nil {
+			tx.Rollback()
+			common.InternalServerError(c, "Failed to import provider: "+err.Error())
+			return
+		}
+		importedCount++
+	}
+
+	// 导入模型
+	for _, model := range config.Models {
+		// 检查是否已存在同名模型
+		var existing models.Model
+		if err := tx.Where("name = ?", model.Name).First(&existing).Error; err == nil {
+			// 已存在,跳过
+			continue
+		}
+
+		model.ID = 0
+		if err := tx.Create(&model).Error; err != nil {
+			tx.Rollback()
+			common.InternalServerError(c, "Failed to import model: "+err.Error())
+			return
+		}
+		importedCount++
+	}
+
+	// 导入模型-提供商关联
+	for _, mp := range config.ModelProviders {
+		mp.ID = 0
+		// 需要根据名称找到新的模型ID和提供商ID
+		var model models.Model
+		var provider models.Provider
+		
+		if err := tx.First(&model, mp.ModelID).Error; err != nil {
+			continue // 模型不存在,跳过
+		}
+		if err := tx.First(&provider, mp.ProviderID).Error; err != nil {
+			continue // 提供商不存在,跳过
+		}
+
+		// 检查关联是否已存在
+		var existing models.ModelWithProvider
+		if err := tx.Where("model_id = ? AND provider_id = ? AND provider_model = ?",
+			model.ID, provider.ID, mp.ProviderModel).First(&existing).Error; err == nil {
+			continue // 已存在,跳过
+		}
+
+		if err := tx.Create(&mp).Error; err != nil {
+			tx.Rollback()
+			common.InternalServerError(c, "Failed to import model-provider association: "+err.Error())
+			return
+		}
+		importedCount++
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		common.InternalServerError(c, "Failed to commit transaction: "+err.Error())
+		return
+	}
+
+	common.Success(c, map[string]interface{}{
+		"imported_count": importedCount,
+		"message": "Configuration imported successfully",
+	})
+}
+
+// ClearLogs 清理请求日志
+func ClearLogs(c *gin.Context) {
+	// 获取清理参数
+	daysStr := c.Query("days")
+	if daysStr == "" {
+		common.BadRequest(c, "days parameter is required")
+		return
+	}
+
+	days, err := strconv.Atoi(daysStr)
+	if err != nil || days < 0 {
+		common.BadRequest(c, "Invalid days parameter")
+		return
+	}
+
+	// 计算截止时间
+	cutoffTime := time.Now().AddDate(0, 0, -days)
+
+	// 删除日志
+	result := models.DB.Where("created_at < ?", cutoffTime).Delete(&models.ChatLog{})
+	if result.Error != nil {
+		common.InternalServerError(c, "Failed to clear logs: "+result.Error.Error())
+		return
+	}
+
+	common.Success(c, map[string]interface{}{
+		"deleted_count": result.RowsAffected,
+		"cutoff_date": cutoffTime.Format("2006-01-02 15:04:05"),
+	})
+}

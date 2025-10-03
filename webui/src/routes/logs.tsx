@@ -13,7 +13,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import Loading from "@/components/loading";
-import { getLogs, getProviders, getModels, exportLogs, type ChatLog, type Provider, type Model, getProviderTemplates } from "@/lib/api";
+import { getLogs, getProviders, getModels, exportLogs, clearLogs, type ChatLog, type Provider, type Model, getProviderTemplates } from "@/lib/api";
+import { Input } from "@/components/ui/input";
 
 // 格式化时间显示，自动选择合适的单位
 // 假设后端返回的时间单位是纳秒
@@ -58,6 +59,11 @@ export default function LogsPage() {
   // 详情弹窗
   const [selectedLog, setSelectedLog] = useState<ChatLog | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  
+  // 清理功能
+  const [isClearDialogOpen, setIsClearDialogOpen] = useState(false);
+  const [clearDays, setClearDays] = useState<string>("7");
+  const [clearing, setClearing] = useState(false);
 
   // 获取提供商列表和Style类型
   const fetchProviders = async () => {
@@ -157,6 +163,31 @@ export default function LogsPage() {
     window.location.href = downloadUrl;
   };
 
+  const handleClearLogs = async () => {
+    const days = parseInt(clearDays);
+    if (isNaN(days) || days <= 0) {
+      alert('请输入有效的天数（大于0的整数）');
+      return;
+    }
+
+    if (!confirm(`确定要删除 ${days} 天前的所有日志吗？此操作不可恢复！`)) {
+      return;
+    }
+
+    setClearing(true);
+    try {
+      await clearLogs(days);
+      alert(`成功清理 ${days} 天前的日志`);
+      setIsClearDialogOpen(false);
+      fetchLogs();
+    } catch (err) {
+      alert(`清理失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      console.error(err);
+    } finally {
+      setClearing(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <Card>
@@ -167,6 +198,9 @@ export default function LogsPage() {
               <CardDescription>系统处理的请求日志，支持分页和筛选</CardDescription>
             </div>
             <div className="flex gap-2">
+              <Button onClick={() => setIsClearDialogOpen(true)} variant="destructive" className="w-full sm:w-auto">
+                清理日志
+              </Button>
               <Button onClick={handleExport} variant="outline" className="w-full sm:w-auto">
                 导出CSV
               </Button>
@@ -458,6 +492,50 @@ export default function LogsPage() {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* 清理日志对话框 */}
+      <Dialog open={isClearDialogOpen} onOpenChange={setIsClearDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>清理请求日志</DialogTitle>
+            <DialogDescription>
+              删除指定天数之前的所有请求日志。此操作不可恢复，请谨慎操作！
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="clear-days">保留最近多少天的日志</Label>
+              <Input
+                id="clear-days"
+                type="number"
+                min="1"
+                value={clearDays}
+                onChange={(e) => setClearDays(e.target.value)}
+                placeholder="例如: 7"
+              />
+              <p className="text-sm text-gray-500">
+                将删除 {clearDays} 天之前的所有日志
+              </p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setIsClearDialogOpen(false)}
+              disabled={clearing}
+            >
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleClearLogs}
+              disabled={clearing}
+            >
+              {clearing ? '清理中...' : '确认清理'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
