@@ -775,13 +775,20 @@ func ImportConfig(c *gin.Context) {
 	}()
 
 	importedCount := 0
+	
+	// 创建ID映射表
+	providerIDMap := make(map[uint]uint) // oldID -> newID
+	modelIDMap := make(map[uint]uint)    // oldID -> newID
 
 	// 导入提供商
 	for _, provider := range config.Providers {
+		oldID := provider.ID
+		
 		// 检查是否已存在同名提供商
 		var existing models.Provider
 		if err := tx.Where("name = ?", provider.Name).First(&existing).Error; err == nil {
-			// 已存在,跳过
+			// 已存在,记录ID映射
+			providerIDMap[oldID] = existing.ID
 			continue
 		}
 
@@ -791,15 +798,19 @@ func ImportConfig(c *gin.Context) {
 			common.InternalServerError(c, "Failed to import provider: "+err.Error())
 			return
 		}
+		providerIDMap[oldID] = provider.ID
 		importedCount++
 	}
 
 	// 导入模型
 	for _, model := range config.Models {
+		oldID := model.ID
+		
 		// 检查是否已存在同名模型
 		var existing models.Model
 		if err := tx.Where("name = ?", model.Name).First(&existing).Error; err == nil {
-			// 已存在,跳过
+			// 已存在,记录ID映射
+			modelIDMap[oldID] = existing.ID
 			continue
 		}
 
@@ -809,27 +820,30 @@ func ImportConfig(c *gin.Context) {
 			common.InternalServerError(c, "Failed to import model: "+err.Error())
 			return
 		}
+		modelIDMap[oldID] = model.ID
 		importedCount++
 	}
 
 	// 导入模型-提供商关联
 	for _, mp := range config.ModelProviders {
 		mp.ID = 0
-		// 需要根据名称找到新的模型ID和提供商ID
-		var model models.Model
-		var provider models.Provider
 		
-		if err := tx.First(&model, mp.ModelID).Error; err != nil {
-			continue // 模型不存在,跳过
+		// 使用ID映射表找到新的ID
+		newModelID, modelExists := modelIDMap[mp.ModelID]
+		newProviderID, providerExists := providerIDMap[mp.ProviderID]
+		
+		if !modelExists || !providerExists {
+			continue // 模型或提供商不存在,跳过
 		}
-		if err := tx.First(&provider, mp.ProviderID).Error; err != nil {
-			continue // 提供商不存在,跳过
-		}
+		
+		// 更新为新ID
+		mp.ModelID = newModelID
+		mp.ProviderID = newProviderID
 
 		// 检查关联是否已存在
 		var existing models.ModelWithProvider
 		if err := tx.Where("model_id = ? AND provider_id = ? AND provider_model = ?",
-			model.ID, provider.ID, mp.ProviderModel).First(&existing).Error; err == nil {
+			mp.ModelID, mp.ProviderID, mp.ProviderModel).First(&existing).Error; err == nil {
 			continue // 已存在,跳过
 		}
 

@@ -380,7 +380,7 @@ export default function ProvidersPage() {
             </Button>
           )}
           <Button onClick={handleExport} variant="outline" className="w-full sm:w-auto">
-            导出配置
+            导出完整配置
           </Button>
           <label htmlFor="import-config">
             <Button
@@ -389,7 +389,7 @@ export default function ProvidersPage() {
               disabled={importing}
               onClick={() => document.getElementById('import-config')?.click()}
             >
-              {importing ? '导入中...' : '导入配置'}
+              {importing ? '导入中...' : '导入完整配置'}
             </Button>
           </label>
           <input
