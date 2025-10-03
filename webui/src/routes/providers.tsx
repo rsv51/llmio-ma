@@ -193,15 +193,11 @@ export default function ProvidersPage() {
       });
       
       if (!response.ok) {
-        throw new Error(`导出失败: ${response.status}`);
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       
-      const result = await response.json();
-      if (result.code !== 200) {
-        throw new Error(`导出失败: ${result.message}`);
-      }
-      
-      const blob = new Blob([JSON.stringify(result.data, null, 2)], {
+      const config = await response.json();
+      const blob = new Blob([JSON.stringify(config, null, 2)], {
         type: 'application/json'
       });
       const url = window.URL.createObjectURL(blob);
