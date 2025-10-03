@@ -1,48 +1,61 @@
-name: ci build and push docker image
+name: ci-build-push-ghcr-and-dockerhub
 
 on:
   push:
     tags:
       - 'v*.*.*'
 
-# 1. 设置动态的镜像名称
 env:
-  # 自动构建镜像名称，格式为：<dockerhub-username>/<repo-name>
-  # 例如：'my-docker-user/my-awesome-app'
+  # 镜像基础名，ghcr.io 和 docker.io 共用
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   docker:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # 关键：允许写 ghcr.io
+
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. 动态生成 Docker 标签 (version 和 latest)
-      - name: Extract metadata (tags, labels) for Docker
+      # 1. 解析标签 / 生成元数据
+      - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE_NAME }} # 使用我们动态生成的镜像名
+          images: |
+            ghcr.io/${{ env.IMAGE_NAME }}
+            ${{ secrets.DOCKERHUB_TOKEN != '' && env.IMAGE_NAME || '' }}  # 若未配置 DOCKERHUB_TOKEN 则跳过 docker.io
           tags: |
             type=semver,pattern={{version}}
             type=raw,value=latest
 
+      # 2. 登录 ghcr.io（GITHUB_TOKEN 自带即可）
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 3. 登录 Docker Hub（可选）
       - name: Login to Docker Hub
+        if: ${{ secrets.DOCKERHUB_TOKEN != '' }}
         uses: docker/login-action@v3
         with:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # 4. 多架构支持
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
+      - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 3. 构建并推送最终镜像 (使用 meta 步骤生成的动态标签)
-      - name: Build and push final image
-        if: success() # 确保测试通过后才执行
+      # 5. 构建并推送
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -50,4 +63,3 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-
