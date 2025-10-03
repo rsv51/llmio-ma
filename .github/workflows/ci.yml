@@ -1,48 +1,55 @@
-name: ci build and push docker image
+name: ci-build-push-ghcr-by-date
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    branches:
+      - main          # 仅跟踪 main 分支，可改成 master 或 dev
 
-# 1. 设置动态的镜像名称
 env:
-  # 自动构建镜像名称，格式为：<dockerhub-username>/<repo-name>
-  # 例如：'my-docker-user/my-awesome-app'
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: ${{ github.repository }}   # owner/repo
 
 jobs:
   docker:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. 动态生成 Docker 标签 (version 和 latest)
-      - name: Extract metadata (tags, labels) for Docker
+      # 1. 生成“日期+时间”标签，如 20251003-1532
+      - name: Generate date tag
+        id: date
+        run: echo "tag=$(date +%Y%m%d-%H%M)" >> "$GITHUB_OUTPUT"
+
+      # 2. 同时生成 latest 标签
+      - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE_NAME }} # 使用我们动态生成的镜像名
+          images: ghcr.io/${{ env.IMAGE_NAME }}
           tags: |
-            type=semver,pattern={{version}}
+            type=raw,value=${{ steps.date.outputs.tag }}
             type=raw,value=latest
 
-      - name: Login to Docker Hub
+      # 3. 登录 ghcr.io
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
+      # 4. 多架构
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
+      - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 3. 构建并推送最终镜像 (使用 meta 步骤生成的动态标签)
-      - name: Build and push final image
-        if: success() # 确保测试通过后才执行
+      # 5. 构建并推送（含详细日志）
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -50,4 +57,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+          # 关键：打开详细日志
+          provenance: true
+          outputs: |
+            type=image,name=ghcr.io/${{ env.IMAGE_NAME }},push-by-digest=true,push=true
