@@ -3,11 +3,11 @@ name: ci-build-push-ghcr-by-date
 on:
   push:
     branches:
-      - main          # 仅跟踪 main 分支，可改成 master 或 dev
+      - main
 
 env:
-  # 统一转小写，避免 403
-  IMAGE_NAME: ${{ github.repository_owner }}/${{ github.event.repository.name }}
+  # 使用小写，确保与您的用户名匹配
+  IMAGE_NAME: ${{ lower(github.repository_owner) }}/${{ lower(github.event.repository.name) }}
 
 jobs:
   docker:
@@ -40,8 +40,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Debug output
+        run: |
+          echo "Image name: ${{ env.IMAGE_NAME }}"
+          echo "Tags: ${{ steps.meta.outputs.tags }}"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
+        
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -53,5 +59,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # 关闭默认 attestations，减少 manifest 层，兼容旧客户端
           provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
