@@ -477,3 +477,68 @@ export async function clearLogs(days: number): Promise<{ deleted_count: number; 
     method: 'DELETE',
   });
 }
+
+// Batch Import
+export interface BatchImportResult {
+  providers: {
+    total: number;
+    imported: number;
+    skipped: number;
+    errors: Array<{ row: number; field: string; error: string }>;
+  };
+  models: {
+    total: number;
+    imported: number;
+    skipped: number;
+    errors: Array<{ row: number; field: string; error: string }>;
+  };
+  associations: {
+    total: number;
+    imported: number;
+    skipped: number;
+    errors: Array<{ row: number; field: string; error: string }>;
+  };
+  summary: {
+    total_imported: number;
+    total_skipped: number;
+    total_errors: number;
+  };
+}
+
+export async function batchImport(file: File): Promise<BatchImportResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const token = localStorage.getItem("authToken");
+  const response = await fetch('/api/config/batch-import', {
+    method: 'POST',
+    headers: {
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    },
+    body: formData,
+  });
+
+  if (response.status === 401) {
+    window.location.href = '/login';
+    throw new Error('Unauthorized');
+  }
+
+  if (!response.ok) {
+    throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  if (data.code !== 200) {
+    throw new Error(`API request failed: ${data.code} ${data.message}`);
+  }
+  
+  return data.data as BatchImportResult;
+}
+
+export function downloadBatchImportTemplate(withSample: boolean = true): string {
+  const token = localStorage.getItem("authToken");
+  const params = new URLSearchParams();
+  if (withSample) params.append('sample', 'true');
+  
+  return `/api/config/batch-import/template${params.toString() ? '?' + params.toString() : ''}${token ? (params.toString() ? '&' : '?') + 'token=' + token : ''}`;
+}

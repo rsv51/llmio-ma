@@ -57,7 +57,10 @@ import {
   batchDeleteProviders,
   validateProviderConfig,
   importConfig,
-  type ImportConfigData
+  batchImport,
+  downloadBatchImportTemplate,
+  type ImportConfigData,
+  type BatchImportResult
 } from "@/lib/api";
 import type { Provider, ProviderTemplate, ProviderModel, ProviderHealth } from "@/lib/api";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -97,6 +100,11 @@ export default function ProvidersPage() {
   
   // 导入配置相关
   const [importing, setImporting] = useState(false);
+  
+  // 批量导入相关
+  const [batchImporting, setBatchImporting] = useState(false);
+  const [batchImportResult, setBatchImportResult] = useState<BatchImportResult | null>(null);
+  const [showBatchImportResult, setShowBatchImportResult] = useState(false);
   
   // 初始化表单
   const form = useForm<z.infer<typeof formSchema>>({
@@ -235,6 +243,41 @@ export default function ProvidersPage() {
       // 清空文件输入
       event.target.value = '';
     }
+  };
+
+  const handleBatchImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.endsWith('.xlsx')) {
+      alert('仅支持 .xlsx 格式的文件');
+      event.target.value = '';
+      return;
+    }
+
+    setBatchImporting(true);
+    try {
+      const result = await batchImport(file);
+      setBatchImportResult(result);
+      setShowBatchImportResult(true);
+      
+      // 刷新数据
+      if (result.summary.total_imported > 0) {
+        fetchProviders();
+        fetchProvidersHealth();
+      }
+    } catch (err) {
+      alert(`批量导入失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      console.error(err);
+    } finally {
+      setBatchImporting(false);
+      event.target.value = '';
+    }
+  };
+
+  const downloadTemplate = (withSample: boolean) => {
+    const url = downloadBatchImportTemplate(withSample);
+    window.open(url, '_blank');
   };
 
   const handleCreate = async (values: z.infer<typeof formSchema>) => {
@@ -379,6 +422,30 @@ export default function ProvidersPage() {
               批量删除 ({selectedIds.size})
             </Button>
           )}
+          <Button
+            onClick={() => downloadTemplate(true)}
+            variant="outline"
+            className="w-full sm:w-auto"
+          >
+            下载导入模板
+          </Button>
+          <label htmlFor="batch-import">
+            <Button
+              variant="outline"
+              className="w-full sm:w-auto cursor-pointer"
+              disabled={batchImporting}
+              onClick={() => document.getElementById('batch-import')?.click()}
+            >
+              {batchImporting ? '批量导入中...' : '批量导入'}
+            </Button>
+          </label>
+          <input
+            id="batch-import"
+            type="file"
+            accept=".xlsx"
+            onChange={handleBatchImport}
+            style={{ display: 'none' }}
+          />
           <Button onClick={handleExport} variant="outline" className="w-full sm:w-auto">
             导出完整配置
           </Button>
@@ -798,6 +865,138 @@ export default function ProvidersPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* 批量导入结果对话框 */}
+      <Dialog open={showBatchImportResult} onOpenChange={setShowBatchImportResult}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>批量导入结果</DialogTitle>
+            <DialogDescription>
+              导入操作已完成，以下是详细结果
+            </DialogDescription>
+          </DialogHeader>
+          
+          {batchImportResult && (
+            <div className="space-y-4">
+              {/* 总结 */}
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <h3 className="font-bold mb-2">总结</h3>
+                <div className="grid grid-cols-3 gap-4 text-center">
+                  <div>
+                    <div className="text-2xl font-bold text-green-600">
+                      {batchImportResult.summary.total_imported}
+                    </div>
+                    <div className="text-sm text-gray-500">成功导入</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-yellow-600">
+                      {batchImportResult.summary.total_skipped}
+                    </div>
+                    <div className="text-sm text-gray-500">跳过</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-red-600">
+                      {batchImportResult.summary.total_errors}
+                    </div>
+                    <div className="text-sm text-gray-500">错误</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 提供商结果 */}
+              <div className="border rounded-lg p-4">
+                <h3 className="font-bold mb-2 flex items-center gap-2">
+                  <span>提供商</span>
+                  {batchImportResult.providers.errors.length === 0 ? (
+                    <span className="text-green-600">✓</span>
+                  ) : (
+                    <span className="text-red-600">✗</span>
+                  )}
+                </h3>
+                <div className="text-sm space-y-1">
+                  <p>总计: {batchImportResult.providers.total}</p>
+                  <p>已导入: {batchImportResult.providers.imported}</p>
+                  <p>已跳过: {batchImportResult.providers.skipped}</p>
+                  {batchImportResult.providers.errors.length > 0 && (
+                    <div className="mt-2">
+                      <p className="text-red-600 font-medium">错误:</p>
+                      <ul className="list-disc list-inside space-y-1 text-xs">
+                        {batchImportResult.providers.errors.map((err, idx) => (
+                          <li key={idx}>
+                            第{err.row}行 ({err.field}): {err.error}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 模型结果 */}
+              <div className="border rounded-lg p-4">
+                <h3 className="font-bold mb-2 flex items-center gap-2">
+                  <span>模型</span>
+                  {batchImportResult.models.errors.length === 0 ? (
+                    <span className="text-green-600">✓</span>
+                  ) : (
+                    <span className="text-red-600">✗</span>
+                  )}
+                </h3>
+                <div className="text-sm space-y-1">
+                  <p>总计: {batchImportResult.models.total}</p>
+                  <p>已导入: {batchImportResult.models.imported}</p>
+                  <p>已跳过: {batchImportResult.models.skipped}</p>
+                  {batchImportResult.models.errors.length > 0 && (
+                    <div className="mt-2">
+                      <p className="text-red-600 font-medium">错误:</p>
+                      <ul className="list-disc list-inside space-y-1 text-xs">
+                        {batchImportResult.models.errors.map((err, idx) => (
+                          <li key={idx}>
+                            第{err.row}行 ({err.field}): {err.error}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 关联结果 */}
+              <div className="border rounded-lg p-4">
+                <h3 className="font-bold mb-2 flex items-center gap-2">
+                  <span>模型提供商关联</span>
+                  {batchImportResult.associations.errors.length === 0 ? (
+                    <span className="text-green-600">✓</span>
+                  ) : (
+                    <span className="text-red-600">✗</span>
+                  )}
+                </h3>
+                <div className="text-sm space-y-1">
+                  <p>总计: {batchImportResult.associations.total}</p>
+                  <p>已导入: {batchImportResult.associations.imported}</p>
+                  <p>已跳过: {batchImportResult.associations.skipped}</p>
+                  {batchImportResult.associations.errors.length > 0 && (
+                    <div className="mt-2">
+                      <p className="text-red-600 font-medium">错误:</p>
+                      <ul className="list-disc list-inside space-y-1 text-xs">
+                        {batchImportResult.associations.errors.map((err, idx) => (
+                          <li key={idx}>
+                            第{err.row}行 ({err.field}): {err.error}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          
+          <DialogFooter>
+            <Button onClick={() => setShowBatchImportResult(false)}>关闭</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

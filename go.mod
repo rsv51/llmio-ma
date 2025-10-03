@@ -12,6 +12,7 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/tidwall/gjson v1.18.0
 	github.com/tidwall/sjson v1.2.5
+	github.com/xuri/excelize/v2 v2.9.0
 	golang.org/x/crypto/x509roots/fallback v0.0.0-20250803194717-c247dead11de
 	gorm.io/gorm v1.30.0
 )

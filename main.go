@@ -105,6 +105,8 @@ func main() {
 	api.POST("/providers/validate", handler.ValidateProviderConfig)
 	api.GET("/config/export", handler.ExportConfig)
 	api.POST("/config/import", handler.ImportConfig)
+	api.POST("/config/batch-import", handler.BatchImport)
+	api.GET("/config/batch-import/template", handler.DownloadBatchImportTemplate)
 	
 	// Log management
 	api.DELETE("/logs/clear", handler.ClearLogs)

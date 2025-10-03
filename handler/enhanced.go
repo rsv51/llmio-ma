@@ -3,8 +3,10 @@ package handler
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"github.com/atopos31/llmio/providers"
 	"github.com/atopos31/llmio/service"
 	"github.com/gin-gonic/gin"
+	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
 )
 
@@ -896,4 +899,509 @@ func ClearLogs(c *gin.Context) {
 		"deleted_count": result.RowsAffected,
 		"cutoff_date": cutoffTime.Format("2006-01-02 15:04:05"),
 	})
+}
+
+// BatchImportResult 批量导入结果
+type BatchImportResult struct {
+	Providers    ImportStats              `json:"providers"`
+	Models       ImportStats              `json:"models"`
+	Associations ImportStats              `json:"associations"`
+	Summary      ImportSummary            `json:"summary"`
+}
+
+// ImportStats 导入统计
+type ImportStats struct {
+	Total    int                  `json:"total"`
+	Imported int                  `json:"imported"`
+	Skipped  int                  `json:"skipped"`
+	Errors   []ImportError        `json:"errors"`
+}
+
+// ImportError 导入错误
+type ImportError struct {
+	Row   int    `json:"row"`
+	Field string `json:"field"`
+	Error string `json:"error"`
+}
+
+// ImportSummary 导入总结
+type ImportSummary struct {
+	TotalImported int `json:"total_imported"`
+	TotalSkipped  int `json:"total_skipped"`
+	TotalErrors   int `json:"total_errors"`
+}
+
+// BatchImport 批量导入配置
+func BatchImport(c *gin.Context) {
+	file, err := c.FormFile("file")
+	if err != nil {
+		common.BadRequest(c, "Failed to get upload file: "+err.Error())
+		return
+	}
+
+	// 检查文件扩展名
+	if !strings.HasSuffix(strings.ToLower(file.Filename), ".xlsx") {
+		common.BadRequest(c, "Only .xlsx files are supported")
+		return
+	}
+
+	// 保存临时文件
+	tmpDir := os.TempDir()
+	tmpFile := fmt.Sprintf("%s/llmio_import_%d.xlsx", tmpDir, time.Now().Unix())
+	if err := c.SaveUploadedFile(file, tmpFile); err != nil {
+		common.InternalServerError(c, "Failed to save upload file: "+err.Error())
+		return
+	}
+	defer func() {
+		// 清理临时文件
+		if err := os.Remove(tmpFile); err != nil {
+			slog.Warn("Failed to remove temp file", "error", err)
+		}
+	}()
+
+	// 解析Excel文件
+	result, err := processBatchImport(c.Request.Context(), tmpFile)
+	if err != nil {
+		common.InternalServerError(c, "Failed to process import: "+err.Error())
+		return
+	}
+
+	common.Success(c, result)
+}
+
+// processBatchImport 处理批量导入
+func processBatchImport(ctx context.Context, filePath string) (*BatchImportResult, error) {
+	f, err := excelize.OpenFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open excel file: %w", err)
+	}
+	defer f.Close()
+
+	result := &BatchImportResult{}
+
+	// 导入提供商
+	providerMap, providerStats := importProviders(ctx, f)
+	result.Providers = providerStats
+
+	// 导入模型
+	modelMap, modelStats := importModels(ctx, f)
+	result.Models = modelStats
+
+	// 导入关联
+	associationStats := importAssociations(ctx, f, providerMap, modelMap)
+	result.Associations = associationStats
+
+	// 计算总结
+	result.Summary = ImportSummary{
+		TotalImported: result.Providers.Imported + result.Models.Imported + result.Associations.Imported,
+		TotalSkipped:  result.Providers.Skipped + result.Models.Skipped + result.Associations.Skipped,
+		TotalErrors:   len(result.Providers.Errors) + len(result.Models.Errors) + len(result.Associations.Errors),
+	}
+
+	return result, nil
+}
+
+// importProviders 导入提供商
+func importProviders(ctx context.Context, f *excelize.File) (map[string]uint, ImportStats) {
+	stats := ImportStats{Errors: []ImportError{}}
+	nameToID := make(map[string]uint)
+
+	rows, err := f.GetRows("Providers")
+	if err != nil {
+		stats.Errors = append(stats.Errors, ImportError{
+			Row:   0,
+			Field: "sheet",
+			Error: "Providers sheet not found",
+		})
+		return nameToID, stats
+	}
+
+	if len(rows) < 2 {
+		return nameToID, stats // 没有数据行
+	}
+
+	// 跳过表头,从第2行开始
+	for i, row := range rows[1:] {
+		rowNum := i + 2 // Excel行号从1开始,加上跳过的表头
+		stats.Total++
+
+		if len(row) < 3 {
+			stats.Errors = append(stats.Errors, ImportError{
+				Row:   rowNum,
+				Field: "row",
+				Error: "Insufficient columns",
+			})
+			continue
+		}
+
+		name := strings.TrimSpace(row[0])
+		providerType := strings.TrimSpace(row[1])
+		config := strings.TrimSpace(row[2])
+		console := ""
+		if len(row) > 3 {
+			console = strings.TrimSpace(row[3])
+		}
+
+		// 验证必填字段
+		if name == "" {
+			stats.Errors = append(stats.Errors, ImportError{
+				Row:   rowNum,
+				Field: "name",
+				Error: "Name is required",
+			})
+			continue
+		}
+		if providerType == "" {
+			stats.Errors = append(stats.Errors, ImportError{
+				Row:   rowNum,
+				Field: "type",
+				Error: "Type is required",
+			})
+			continue
+		}
+		if config == "" {
+			stats.Errors = append(stats.Errors, ImportError{
+				Row:   rowNum,
+				Field: "config",
+				Error: "Config is required",
+			})
+			continue
+		}
+
+		// 验证JSON格式
+		if !json.Valid([]byte(config)) {
+			stats.Errors = append(stats.Errors, ImportError{
+				Row:   rowNum,
+				Field: "config",
+				Error: "Invalid JSON format",
+			})
+			continue
+		}
+
+		// 检查是否已存在
+		var existing models.Provider
+		if err := models.DB.Where("name = ?", name).First(&existing).Error; err == nil {
+			nameToID[name] = existing.ID
+			stats.Skipped++
+			continue
+		}
+
+		// 创建提供商
+		provider := models.Provider{
+			Name:    name,
+			Type:    providerType,
+			Config:  config,
+			Console: console,
+		}
+
+		if err := models.DB.Create(&provider).Error; err != nil {
+			stats.Errors = append(stats.Errors, ImportError{
+				Row:   rowNum,
+				Field: "database",
+				Error: err.Error(),
+			})
+			continue
+		}
+
+		nameToID[name] = provider.ID
+		stats.Imported++
+	}
+
+	return nameToID, stats
+}
+
+// importModels 导入模型
+func importModels(ctx context.Context, f *excelize.File) (map[string]uint, ImportStats) {
+	stats := ImportStats{Errors: []ImportError{}}
+	nameToID := make(map[string]uint)
+
+	rows, err := f.GetRows("Models")
+	if err != nil {
+		stats.Errors = append(stats.Errors, ImportError{
+			Row:   0,
+			Field: "sheet",
+			Error: "Models sheet not found",
+		})
+		return nameToID, stats
+	}
+
+	if len(rows) < 2 {
+		return nameToID, stats
+	}
+
+	for i, row := range rows[1:] {
+		rowNum := i + 2
+		stats.Total++
+
+		if len(row) < 4 {
+			stats.Errors = append(stats.Errors, ImportError{
+				Row:   rowNum,
+				Field: "row",
+				Error: "Insufficient columns",
+			})
+			continue
+		}
+
+		name := strings.TrimSpace(row[0])
+		remark := strings.TrimSpace(row[1])
+		maxRetryStr := strings.TrimSpace(row[2])
+		timeoutStr := strings.TrimSpace(row[3])
+
+		// 验证必填字段
+		if name == "" {
+			stats.Errors = append(stats.Errors, ImportError{
+				Row:   rowNum,
+				Field: "name",
+				Error: "Name is required",
+			})
+			continue
+		}
+
+		maxRetry, err := strconv.Atoi(maxRetryStr)
+		if err != nil {
+			stats.Errors = append(stats.Errors, ImportError{
+				Row:   rowNum,
+				Field: "max_retry",
+				Error: "Invalid number format",
+			})
+			continue
+		}
+
+		timeout, err := strconv.Atoi(timeoutStr)
+		if err != nil {
+			stats.Errors = append(stats.Errors, ImportError{
+				Row:   rowNum,
+				Field: "timeout",
+				Error: "Invalid number format",
+			})
+			continue
+		}
+
+		// 检查是否已存在
+		var existing models.Model
+		if err := models.DB.Where("name = ?", name).First(&existing).Error; err == nil {
+			nameToID[name] = existing.ID
+			stats.Skipped++
+			continue
+		}
+
+		// 创建模型
+		model := models.Model{
+			Name:     name,
+			Remark:   remark,
+			MaxRetry: maxRetry,
+			TimeOut:  timeout,
+		}
+
+		if err := models.DB.Create(&model).Error; err != nil {
+			stats.Errors = append(stats.Errors, ImportError{
+				Row:   rowNum,
+				Field: "database",
+				Error: err.Error(),
+			})
+			continue
+		}
+
+		nameToID[name] = model.ID
+		stats.Imported++
+	}
+
+	return nameToID, stats
+}
+
+// importAssociations 导入关联
+func importAssociations(ctx context.Context, f *excelize.File, providerMap, modelMap map[string]uint) ImportStats {
+	stats := ImportStats{Errors: []ImportError{}}
+
+	rows, err := f.GetRows("Associations")
+	if err != nil {
+		stats.Errors = append(stats.Errors, ImportError{
+			Row:   0,
+			Field: "sheet",
+			Error: "Associations sheet not found",
+		})
+		return stats
+	}
+
+	if len(rows) < 2 {
+		return stats
+	}
+
+	for i, row := range rows[1:] {
+		rowNum := i + 2
+		stats.Total++
+
+		if len(row) < 7 {
+			stats.Errors = append(stats.Errors, ImportError{
+				Row:   rowNum,
+				Field: "row",
+				Error: "Insufficient columns",
+			})
+			continue
+		}
+
+		modelName := strings.TrimSpace(row[0])
+		providerName := strings.TrimSpace(row[1])
+		providerModel := strings.TrimSpace(row[2])
+		toolCallStr := strings.ToLower(strings.TrimSpace(row[3]))
+		structuredOutputStr := strings.ToLower(strings.TrimSpace(row[4]))
+		imageStr := strings.ToLower(strings.TrimSpace(row[5]))
+		weightStr := strings.TrimSpace(row[6])
+
+		// 查找模型ID
+		modelID, ok := modelMap[modelName]
+		if !ok {
+			stats.Errors = append(stats.Errors, ImportError{
+				Row:   rowNum,
+				Field: "model_name",
+				Error: fmt.Sprintf("Model '%s' not found", modelName),
+			})
+			continue
+		}
+
+		// 查找提供商ID
+		providerID, ok := providerMap[providerName]
+		if !ok {
+			stats.Errors = append(stats.Errors, ImportError{
+				Row:   rowNum,
+				Field: "provider_name",
+				Error: fmt.Sprintf("Provider '%s' not found", providerName),
+			})
+			continue
+		}
+
+		// 解析布尔值
+		toolCall := toolCallStr == "true"
+		structuredOutput := structuredOutputStr == "true"
+		image := imageStr == "true"
+
+		// 解析权重
+		weight, err := strconv.Atoi(weightStr)
+		if err != nil {
+			stats.Errors = append(stats.Errors, ImportError{
+				Row:   rowNum,
+				Field: "weight",
+				Error: "Invalid number format",
+			})
+			continue
+		}
+
+		// 检查是否已存在
+		var existing models.ModelWithProvider
+		if err := models.DB.Where("model_id = ? AND provider_id = ? AND provider_model = ?",
+			modelID, providerID, providerModel).First(&existing).Error; err == nil {
+			stats.Skipped++
+			continue
+		}
+
+		// 创建关联
+		association := models.ModelWithProvider{
+			ModelID:          modelID,
+			ProviderID:       providerID,
+			ProviderModel:    providerModel,
+			ToolCall:         &toolCall,
+			StructuredOutput: &structuredOutput,
+			Image:            &image,
+			Weight:           weight,
+		}
+
+		if err := models.DB.Create(&association).Error; err != nil {
+			stats.Errors = append(stats.Errors, ImportError{
+				Row:   rowNum,
+				Field: "database",
+				Error: err.Error(),
+			})
+			continue
+		}
+
+		stats.Imported++
+	}
+
+	return stats
+}
+
+// DownloadBatchImportTemplate 下载批量导入模板
+func DownloadBatchImportTemplate(c *gin.Context) {
+	withSample := c.Query("sample") == "true"
+
+	f := excelize.NewFile()
+	defer f.Close()
+
+	// 创建Providers sheet
+	f.SetSheetName("Sheet1", "Providers")
+	providerHeaders := []string{"name", "type", "config", "console"}
+	for i, header := range providerHeaders {
+		cell := fmt.Sprintf("%c1", 'A'+i)
+		f.SetCellValue("Providers", cell, header)
+	}
+
+	if withSample {
+		providerSamples := [][]interface{}{
+			{"OpenAI-Main", "openai", `{"base_url":"https://api.openai.com/v1","api_key":"sk-xxx"}`, "https://platform.openai.com"},
+			{"Anthropic-Main", "anthropic", `{"base_url":"https://api.anthropic.com","api_key":"sk-ant-xxx","version":"2023-06-01"}`, "https://console.anthropic.com"},
+		}
+		for i, sample := range providerSamples {
+			for j, value := range sample {
+				cell := fmt.Sprintf("%c%d", 'A'+j, i+2)
+				f.SetCellValue("Providers", cell, value)
+			}
+		}
+	}
+
+	// 创建Models sheet
+	f.NewSheet("Models")
+	modelHeaders := []string{"name", "remark", "max_retry", "timeout"}
+	for i, header := range modelHeaders {
+		cell := fmt.Sprintf("%c1", 'A'+i)
+		f.SetCellValue("Models", cell, header)
+	}
+
+	if withSample {
+		modelSamples := [][]interface{}{
+			{"gpt-4o", "GPT-4 Optimized", 3, 60},
+			{"claude-3.5-sonnet", "Claude 3.5 Sonnet", 3, 60},
+		}
+		for i, sample := range modelSamples {
+			for j, value := range sample {
+				cell := fmt.Sprintf("%c%d", 'A'+j, i+2)
+				f.SetCellValue("Models", cell, value)
+			}
+		}
+	}
+
+	// 创建Associations sheet
+	f.NewSheet("Associations")
+	associationHeaders := []string{"model_name", "provider_name", "provider_model", "tool_call", "structured_output", "image", "weight"}
+	for i, header := range associationHeaders {
+		cell := fmt.Sprintf("%c1", 'A'+i)
+		f.SetCellValue("Associations", cell, header)
+	}
+
+	if withSample {
+		associationSamples := [][]interface{}{
+			{"gpt-4o", "OpenAI-Main", "gpt-4o-2024-05-13", true, true, true, 100},
+			{"claude-3.5-sonnet", "Anthropic-Main", "claude-3-5-sonnet-20241022", true, false, true, 100},
+		}
+		for i, sample := range associationSamples {
+			for j, value := range sample {
+				cell := fmt.Sprintf("%c%d", 'A'+j, i+2)
+				f.SetCellValue("Associations", cell, value)
+			}
+		}
+	}
+
+	// 设置响应头
+	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	filename := "llmio_batch_import_template.xlsx"
+	if withSample {
+		filename = "llmio_batch_import_template_with_sample.xlsx"
+	}
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+
+	// 写入响应
+	if err := f.Write(c.Writer); err != nil {
+		slog.Error("Failed to write excel file", "error", err)
+		common.InternalServerError(c, "Failed to generate template: "+err.Error())
+		return
+	}
 }
