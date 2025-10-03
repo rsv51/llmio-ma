@@ -45,9 +45,7 @@ import {
   getModels,
   createModel,
   updateModel,
-  deleteModel,
-  importConfig,
-  type ImportConfigData
+  deleteModel
 } from "@/lib/api";
 import type { Model } from "@/lib/api";
 

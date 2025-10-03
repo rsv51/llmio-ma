@@ -51,9 +51,7 @@ import {
   deleteModelProvider,
   getModels,
   getProviders,
-  testModelProvider,
-  importConfig,
-  type ImportConfigData
+  testModelProvider
 } from "@/lib/api";
 import type { ModelWithProvider, Model, Provider } from "@/lib/api";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
