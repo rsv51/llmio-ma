@@ -103,7 +103,7 @@ func GetProviderHealth(c *gin.Context) {
 	}
 
 	// 执行健康检查
-	healthStatus := checkProviderHealth(c.Request.Context(), provider)
+	healthStatus := checkProviderHealth(c.Request.Context(), &provider)
 	common.Success(c, healthStatus)
 }
 
@@ -207,16 +207,20 @@ func GetDashboardStats(c *gin.Context) {
 	since := time.Now().Add(-24 * time.Hour)
 
 	// 获取提供商总数
-	if err := models.DB.Model(&models.Provider{}).Count(&stats.TotalProviders).Error; err != nil {
+	var totalProviders int64
+	if err := models.DB.Model(&models.Provider{}).Count(&totalProviders).Error; err != nil {
 		common.InternalServerError(c, "Failed to count providers: "+err.Error())
 		return
 	}
+	stats.TotalProviders = int(totalProviders)
 
 	// 获取模型总数
-	if err := models.DB.Model(&models.Model{}).Count(&stats.TotalModels).Error; err != nil {
+	var totalModels int64
+	if err := models.DB.Model(&models.Model{}).Count(&totalModels).Error; err != nil {
 		common.InternalServerError(c, "Failed to count models: "+err.Error())
 		return
 	}
+	stats.TotalModels = int(totalModels)
 
 	// 获取24小时内的请求统计
 	if err := models.DB.Model(&models.ChatLog{}).
