@@ -5,10 +5,6 @@ on:
     branches:
       - main
 
-env:
-  # 移除 lower() 函数，直接使用变量
-  IMAGE_NAME: ${{ github.repository_owner }}/${{ github.event.repository.name }}
-
 jobs:
   docker:
     runs-on: ubuntu-latest
@@ -24,11 +20,17 @@ jobs:
         id: date
         run: echo "tag=$(date +%Y%m%d-%H%M)" >> "$GITHUB_OUTPUT"
 
+      - name: Lowercase repository info
+        id: repo_info
+        run: |
+          echo "owner_lower=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+          echo "repo_lower=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ env.IMAGE_NAME }}
+          images: ghcr.io/${{ steps.repo_info.outputs.owner_lower }}/${{ steps.repo_info.outputs.repo_lower }}
           tags: |
             type=raw,value=${{ steps.date.outputs.tag }}
             type=raw,value=latest
@@ -39,6 +41,14 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Debug info
+        run: |
+          echo "Repository owner: ${{ github.repository_owner }}"
+          echo "Repository name: ${{ github.event.repository.name }}"
+          echo "Lowercase owner: ${{ steps.repo_info.outputs.owner_lower }}"
+          echo "Lowercase repo: ${{ steps.repo_info.outputs.repo_lower }}"
+          echo "Image tags: ${{ steps.meta.outputs.tags }}"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
