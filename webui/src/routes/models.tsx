@@ -41,11 +41,14 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import Loading from "@/components/loading";
-import { 
-  getModels, 
-  createModel, 
-  updateModel, 
+import {
+  getModels,
+  createModel,
+  updateModel,
   deleteModel,
+  exportConfig,
+  importConfig,
+  type ImportConfigData
 } from "@/lib/api";
 import type { Model } from "@/lib/api";
 
@@ -64,6 +67,7 @@ export default function ModelsPage() {
   const [open, setOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<Model | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [importing, setImporting] = useState(false);
   
   // 初始化表单
   const form = useForm<z.infer<typeof formSchema>>({
@@ -153,6 +157,55 @@ export default function ModelsPage() {
     setDeleteId(id);
   };
 
+  const handleExport = async () => {
+    try {
+      const token = localStorage.getItem("authToken");
+      const response = await fetch('/api/config/export', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`导出失败: ${response.status}`);
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `llmio-config-${new Date().toISOString().slice(0,10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`导出失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      console.error(err);
+    }
+  };
+
+  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setImporting(true);
+    try {
+      const text = await file.text();
+      const config: ImportConfigData = JSON.parse(text);
+      
+      const result = await importConfig(config);
+      alert(`导入成功! 共导入 ${result.imported_count} 项配置`);
+      fetchModels();
+    } catch (err) {
+      alert(`导入失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      console.error(err);
+    } finally {
+      setImporting(false);
+      event.target.value = '';
+    }
+  };
+
   if (loading) return <Loading message="加载模型列表" />;
   if (error) return <div className="text-red-500">{error}</div>;
 
@@ -160,7 +213,29 @@ export default function ModelsPage() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <h2 className="text-2xl font-bold">模型管理</h2>
-        <Button onClick={openCreateDialog} className="w-full sm:w-auto">添加模型</Button>
+        <div className="flex gap-2">
+          <Button onClick={handleExport} variant="outline" className="w-full sm:w-auto">
+            导出配置
+          </Button>
+          <label htmlFor="import-models-config">
+            <Button
+              variant="outline"
+              className="w-full sm:w-auto cursor-pointer"
+              disabled={importing}
+              onClick={() => document.getElementById('import-models-config')?.click()}
+            >
+              {importing ? '导入中...' : '导入配置'}
+            </Button>
+          </label>
+          <input
+            id="import-models-config"
+            type="file"
+            accept=".json"
+            onChange={handleImport}
+            style={{ display: 'none' }}
+          />
+          <Button onClick={openCreateDialog} className="w-full sm:w-auto">添加模型</Button>
+        </div>
       </div>
       
       {/* 桌面端表格 */}

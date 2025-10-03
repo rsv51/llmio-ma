@@ -184,9 +184,32 @@ export default function ProvidersPage() {
     alert(`已复制 ${filteredProviderModels.length} 个模型名称到剪贴板`);
   };
 
-  const handleExport = () => {
-    const downloadUrl = exportConfig();
-    window.location.href = downloadUrl;
+  const handleExport = async () => {
+    try {
+      const token = localStorage.getItem("authToken");
+      const response = await fetch('/api/config/export', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`导出失败: ${response.status}`);
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `llmio-config-${new Date().toISOString().slice(0,10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`导出失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      console.error(err);
+    }
   };
 
   const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {

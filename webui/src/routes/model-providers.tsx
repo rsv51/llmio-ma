@@ -51,7 +51,10 @@ import {
   deleteModelProvider,
   getModels,
   getProviders,
-  testModelProvider
+  testModelProvider,
+  exportConfig,
+  importConfig,
+  type ImportConfigData
 } from "@/lib/api";
 import type { ModelWithProvider, Model, Provider } from "@/lib/api";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
@@ -95,6 +98,7 @@ export default function ModelProvidersPage() {
     success: null,
     error: null
   });
+  const [importing, setImporting] = useState(false);
 
   const dialogClose = () => {
     setTestDialogOpen(false)
@@ -410,6 +414,60 @@ export default function ModelProvidersPage() {
     form.setValue("model_id", id);
   };
 
+  const handleExport = async () => {
+    try {
+      const token = localStorage.getItem("authToken");
+      const response = await fetch('/api/config/export', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`导出失败: ${response.status}`);
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `llmio-config-${new Date().toISOString().slice(0,10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`导出失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      console.error(err);
+    }
+  };
+
+  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setImporting(true);
+    try {
+      const text = await file.text();
+      const config: ImportConfigData = JSON.parse(text);
+      
+      const result = await importConfig(config);
+      alert(`导入成功! 共导入 ${result.imported_count} 项配置`);
+      
+      // 刷新所有数据
+      await Promise.all([fetchModels(), fetchProviders()]);
+      if (selectedModelId) {
+        fetchModelProviders(selectedModelId);
+      }
+    } catch (err) {
+      alert(`导入失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      console.error(err);
+    } finally {
+      setImporting(false);
+      event.target.value = '';
+    }
+  };
+
   // 获取唯一的提供商类型列表
   const providerTypes = Array.from(new Set(providers.map(p => p.Type).filter(Boolean)));
 
@@ -429,8 +487,32 @@ export default function ModelProvidersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
-        <h2 className="text-2xl font-bold">模型提供商关联</h2>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+          <h2 className="text-2xl font-bold">模型提供商关联</h2>
+          <div className="flex gap-2">
+            <Button onClick={handleExport} variant="outline" className="w-full sm:w-auto">
+              导出配置
+            </Button>
+            <label htmlFor="import-mp-config">
+              <Button
+                variant="outline"
+                className="w-full sm:w-auto cursor-pointer"
+                disabled={importing}
+                onClick={() => document.getElementById('import-mp-config')?.click()}
+              >
+                {importing ? '导入中...' : '导入配置'}
+              </Button>
+            </label>
+            <input
+              id="import-mp-config"
+              type="file"
+              accept=".json"
+              onChange={handleImport}
+              style={{ display: 'none' }}
+            />
+          </div>
+        </div>
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
           <Select value={selectedProviderType} onValueChange={setSelectedProviderType}>
             <SelectTrigger className="w-full sm:w-48">
