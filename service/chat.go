@@ -248,106 +248,107 @@ func SaveChatLog(ctx context.Context, log models.ChatLog) (uint, error) {
 		return 0, err
 	}
 	
-	// updateProviderHealthOnError 在请求失败时更新健康状态
-	func updateProviderHealthOnError(ctx context.Context, providerID uint, errorMsg string, statusCode int) {
-		var validation models.ProviderValidation
-		err := models.DB.Where("provider_id = ?", providerID).First(&validation).Error
+	return log.ID, nil
+}
+
+// updateProviderHealthOnError 在请求失败时更新健康状态
+func updateProviderHealthOnError(ctx context.Context, providerID uint, errorMsg string, statusCode int) {
+	var validation models.ProviderValidation
+	err := models.DB.Where("provider_id = ?", providerID).First(&validation).Error
+	
+	if err == gorm.ErrRecordNotFound {
+		validation = models.ProviderValidation{
+			ProviderID:      providerID,
+			IsHealthy:       true,
+			ErrorCount:      1,
+			LastError:       errorMsg,
+			LastStatusCode:  statusCode,
+			LastValidatedAt: time.Now(),
+		}
 		
-		if err == gorm.ErrRecordNotFound {
-			validation = models.ProviderValidation{
-				ProviderID:      providerID,
-				IsHealthy:       true,
-				ErrorCount:      1,
-				LastError:       errorMsg,
-				LastStatusCode:  statusCode,
-				LastValidatedAt: time.Now(),
-			}
+		if err := models.DB.Create(&validation).Error; err != nil {
+			slog.Error("Failed to create validation record", "provider_id", providerID, "error", err)
+		}
+		return
+	} else if err != nil {
+		slog.Error("Failed to get validation record", "provider_id", providerID, "error", err)
+		return
+	}
+	
+	// 更新错误信息
+	validation.ErrorCount++
+	validation.LastError = errorMsg
+	validation.LastStatusCode = statusCode
+	validation.LastValidatedAt = time.Now()
+	validation.ConsecutiveSuccesses = 0
+	
+	// 获取健康检查配置
+	var config models.HealthCheckConfig
+	if err := models.DB.First(&config).Error; err == nil {
+		// 如果错误次数超过阈值，标记为不健康
+		if validation.ErrorCount >= config.MaxErrorCount && validation.IsHealthy {
+			slog.Warn("Provider marked as unhealthy due to errors",
+				"provider_id", providerID,
+				"error_count", validation.ErrorCount)
+			validation.IsHealthy = false
 			
-			if err := models.DB.Create(&validation).Error; err != nil {
-				slog.Error("Failed to create validation record", "provider_id", providerID, "error", err)
-			}
-			return
-		} else if err != nil {
-			slog.Error("Failed to get validation record", "provider_id", providerID, "error", err)
-			return
-		}
-		
-		// 更新错误信息
-		validation.ErrorCount++
-		validation.LastError = errorMsg
-		validation.LastStatusCode = statusCode
-		validation.LastValidatedAt = time.Now()
-		validation.ConsecutiveSuccesses = 0
-		
-		// 获取健康检查配置
-		var config models.HealthCheckConfig
-		if err := models.DB.First(&config).Error; err == nil {
-			// 如果错误次数超过阈值，标记为不健康
-			if validation.ErrorCount >= config.MaxErrorCount && validation.IsHealthy {
-				slog.Warn("Provider marked as unhealthy due to errors",
-					"provider_id", providerID,
-					"error_count", validation.ErrorCount)
-				validation.IsHealthy = false
-				
-				// 设置下次重试时间
-				nextRetry := time.Now().Add(time.Duration(config.RetryAfterHours) * time.Hour)
-				validation.NextRetryAt = &nextRetry
-			}
-		}
-		
-		if err := models.DB.Save(&validation).Error; err != nil {
-			slog.Error("Failed to save validation record", "provider_id", providerID, "error", err)
+			// 设置下次重试时间
+			nextRetry := time.Now().Add(time.Duration(config.RetryAfterHours) * time.Hour)
+			validation.NextRetryAt = &nextRetry
 		}
 	}
 	
-	// updateProviderHealthOnSuccess 在请求成功时更新健康状态
-	func updateProviderHealthOnSuccess(ctx context.Context, providerID uint) {
-		var validation models.ProviderValidation
-		err := models.DB.Where("provider_id = ?", providerID).First(&validation).Error
-		
-		now := time.Now()
-		
-		if err == gorm.ErrRecordNotFound {
-			validation = models.ProviderValidation{
-				ProviderID:           providerID,
-				IsHealthy:            true,
-				ErrorCount:           0,
-				LastValidatedAt:      now,
-				LastSuccessAt:        &now,
-				ConsecutiveSuccesses: 1,
-			}
-			
-			if err := models.DB.Create(&validation).Error; err != nil {
-				slog.Error("Failed to create validation record", "provider_id", providerID, "error", err)
-			}
-			return
-		} else if err != nil {
-			slog.Error("Failed to get validation record", "provider_id", providerID, "error", err)
-			return
-		}
-		
-		// 更新成功信息
-		wasUnhealthy := !validation.IsHealthy
-		validation.ConsecutiveSuccesses++
-		validation.LastSuccessAt = &now
-		validation.LastValidatedAt = now
-		
-		// 如果之前不健康，现在恢复了
-		if wasUnhealthy {
-			slog.Info("Provider recovered from unhealthy state",
-				"provider_id", providerID,
-				"previous_errors", validation.ErrorCount)
-			validation.IsHealthy = true
-			validation.ErrorCount = 0
-			validation.LastError = ""
-			validation.NextRetryAt = nil
-		}
-		
-		if err := models.DB.Save(&validation).Error; err != nil {
-			slog.Error("Failed to save validation record", "provider_id", providerID, "error", err)
-		}
+	if err := models.DB.Save(&validation).Error; err != nil {
+		slog.Error("Failed to save validation record", "provider_id", providerID, "error", err)
 	}
-	return log.ID, nil
+}
+
+// updateProviderHealthOnSuccess 在请求成功时更新健康状态
+func updateProviderHealthOnSuccess(ctx context.Context, providerID uint) {
+	var validation models.ProviderValidation
+	err := models.DB.Where("provider_id = ?", providerID).First(&validation).Error
+	
+	now := time.Now()
+	
+	if err == gorm.ErrRecordNotFound {
+		validation = models.ProviderValidation{
+			ProviderID:           providerID,
+			IsHealthy:            true,
+			ErrorCount:           0,
+			LastValidatedAt:      now,
+			LastSuccessAt:        &now,
+			ConsecutiveSuccesses: 1,
+		}
+		
+		if err := models.DB.Create(&validation).Error; err != nil {
+			slog.Error("Failed to create validation record", "provider_id", providerID, "error", err)
+		}
+		return
+	} else if err != nil {
+		slog.Error("Failed to get validation record", "provider_id", providerID, "error", err)
+		return
+	}
+	
+	// 更新成功信息
+	wasUnhealthy := !validation.IsHealthy
+	validation.ConsecutiveSuccesses++
+	validation.LastSuccessAt = &now
+	validation.LastValidatedAt = now
+	
+	// 如果之前不健康，现在恢复了
+	if wasUnhealthy {
+		slog.Info("Provider recovered from unhealthy state",
+			"provider_id", providerID,
+			"previous_errors", validation.ErrorCount)
+		validation.IsHealthy = true
+		validation.ErrorCount = 0
+		validation.LastError = ""
+		validation.NextRetryAt = nil
+	}
+	
+	if err := models.DB.Save(&validation).Error; err != nil {
+		slog.Error("Failed to save validation record", "provider_id", providerID, "error", err)
+	}
 }
 
 type ProvidersWithlimit struct {

@@ -188,7 +188,7 @@ func handleError(c *gin.Context, err *gin.Error, start time.Time) {
 
 	// 返回标准错误响应
 	response := ErrorResponse{
-		Code:      errorCode,
+		Code:      int(errorCode),
 		Message:   errorMsg,
 		Error:     err.Error(),
 		Timestamp: time.Now().Format(time.RFC3339),
