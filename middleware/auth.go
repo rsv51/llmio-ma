@@ -14,6 +14,19 @@ func Auth(token string) gin.HandlerFunc {
 		if token == "" {
 			return
 		}
+		
+		// 优先检查URL查询参数中的token(用于文件下载等场景)
+		queryToken := c.Query("token")
+		if queryToken != "" {
+			if queryToken == token {
+				return
+			}
+			common.ErrorWithHttpStatus(c, http.StatusUnauthorized, http.StatusUnauthorized, "Invalid token")
+			c.Abort()
+			return
+		}
+		
+		// 然后检查Authorization请求头
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
 			common.ErrorWithHttpStatus(c, http.StatusUnauthorized, http.StatusUnauthorized, "Authorization header is missing")
