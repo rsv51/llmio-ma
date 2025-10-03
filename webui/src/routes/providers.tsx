@@ -46,15 +46,19 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import Loading from "@/components/loading";
-import { 
-  getProviders, 
-  createProvider, 
-  updateProvider, 
+import {
+  getProviders,
+  createProvider,
+  updateProvider,
   deleteProvider,
   getProviderTemplates,
-  getProviderModels
+  getProviderModels,
+  getAllProvidersHealth,
+  batchDeleteProviders,
+  validateProviderConfig
 } from "@/lib/api";
-import type { Provider, ProviderTemplate, ProviderModel } from "@/lib/api";
+import type { Provider, ProviderTemplate, ProviderModel, ProviderHealth } from "@/lib/api";
+import { Checkbox } from "@/components/ui/checkbox";
 
 // 定义表单验证模式
 const formSchema = z.object({
@@ -78,6 +82,17 @@ export default function ProvidersPage() {
   const [filteredProviderModels, setFilteredProviderModels] = useState<ProviderModel[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   
+  // 健康检查相关
+  const [providersHealth, setProvidersHealth] = useState<Map<number, ProviderHealth>>(new Map());
+  
+  // 批量删除相关
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
+  
+  // 配置验证相关
+  const [validating, setValidating] = useState(false);
+  const [validationResult, setValidationResult] = useState<string | null>(null);
+  
   // 初始化表单
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -92,6 +107,11 @@ export default function ProvidersPage() {
   useEffect(() => {
     fetchProviders();
     fetchProviderTemplates();
+    fetchProvidersHealth();
+    
+    // 每分钟刷新一次健康状态
+    const interval = setInterval(fetchProvidersHealth, 60000);
+    return () => clearInterval(interval);
   }, []);
 
   const fetchProviders = async () => {
@@ -113,6 +133,19 @@ export default function ProvidersPage() {
       setProviderTemplates(data);
     } catch (err) {
       console.error("获取提供商模板失败", err);
+    }
+  };
+
+  const fetchProvidersHealth = async () => {
+    try {
+      const data = await getAllProvidersHealth();
+      const healthMap = new Map<number, ProviderHealth>();
+      data.forEach(health => {
+        healthMap.set(health.provider_id, health);
+      });
+      setProvidersHealth(healthMap);
+    } catch (err) {
+      console.error("获取提供商健康状态失败", err);
     }
   };
 
@@ -140,7 +173,26 @@ export default function ProvidersPage() {
   };
 
   const handleCreate = async (values: z.infer<typeof formSchema>) => {
+    // 先验证配置
+    setValidating(true);
+    setValidationResult(null);
     try {
+      const validation = await validateProviderConfig({
+        name: values.name,
+        type: values.type,
+        config: values.config,
+        console: values.console || ""
+      });
+      
+      if (!validation.valid) {
+        setValidationResult(`配置验证失败: ${validation.error_message}`);
+        setValidating(false);
+        return;
+      }
+      
+      setValidationResult(`配置验证成功! 响应时间: ${validation.response_time_ms}ms`);
+      
+      // 配置验证成功后创建
       await createProvider({
         name: values.name,
         type: values.type,
@@ -149,10 +201,14 @@ export default function ProvidersPage() {
       });
       setOpen(false);
       form.reset({ name: "", type: "", config: "", console: "" });
+      setValidationResult(null);
       fetchProviders();
+      fetchProvidersHealth();
     } catch (err) {
       setError("创建提供商失败");
       console.error(err);
+    } finally {
+      setValidating(false);
     }
   };
 
@@ -181,10 +237,43 @@ export default function ProvidersPage() {
       await deleteProvider(deleteId);
       setDeleteId(null);
       fetchProviders();
+      fetchProvidersHealth();
     } catch (err) {
       setError("删除提供商失败");
       console.error(err);
     }
+  };
+
+  const handleBatchDelete = async () => {
+    if (selectedIds.size === 0) return;
+    try {
+      await batchDeleteProviders(Array.from(selectedIds));
+      setSelectedIds(new Set());
+      setBatchDeleteOpen(false);
+      fetchProviders();
+      fetchProvidersHealth();
+    } catch (err) {
+      setError("批量删除提供商失败");
+      console.error(err);
+    }
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === providers.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(providers.map(p => p.ID)));
+    }
+  };
+
+  const toggleSelect = (id: number) => {
+    const newSelected = new Set(selectedIds);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedIds(newSelected);
   };
 
   const openEditDialog = (provider: Provider) => {
@@ -215,7 +304,18 @@ export default function ProvidersPage() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <h2 className="text-2xl font-bold">提供商管理</h2>
-        <Button onClick={openCreateDialog} className="w-full sm:w-auto">添加提供商</Button>
+        <div className="flex gap-2">
+          {selectedIds.size > 0 && (
+            <Button
+              variant="destructive"
+              onClick={() => setBatchDeleteOpen(true)}
+              className="w-full sm:w-auto"
+            >
+              批量删除 ({selectedIds.size})
+            </Button>
+          )}
+          <Button onClick={openCreateDialog} className="w-full sm:w-auto">添加提供商</Button>
+        </div>
       </div>
       
       {/* 桌面端表格 */}
@@ -223,20 +323,53 @@ export default function ProvidersPage() {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-12">
+                <Checkbox
+                  checked={selectedIds.size === providers.length && providers.length > 0}
+                  onCheckedChange={toggleSelectAll}
+                />
+              </TableHead>
               <TableHead>ID</TableHead>
               <TableHead>名称</TableHead>
               <TableHead>类型</TableHead>
+              <TableHead>健康状态</TableHead>
               <TableHead>配置</TableHead>
               <TableHead>控制台</TableHead>
               <TableHead>操作</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {providers.map((provider) => (
+            {providers.map((provider) => {
+              const health = providersHealth.get(provider.ID);
+              return (
               <TableRow key={provider.ID}>
+                <TableCell>
+                  <Checkbox
+                    checked={selectedIds.has(provider.ID)}
+                    onCheckedChange={() => toggleSelect(provider.ID)}
+                  />
+                </TableCell>
                 <TableCell>{provider.ID}</TableCell>
                 <TableCell>{provider.Name}</TableCell>
                 <TableCell>{provider.Type}</TableCell>
+                <TableCell>
+                  {health ? (
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2 py-1 rounded text-xs ${
+                        health.status === 'healthy' ? 'bg-green-100 text-green-800' :
+                        health.status === 'degraded' ? 'bg-yellow-100 text-yellow-800' :
+                        'bg-red-100 text-red-800'
+                      }`}>
+                        {health.status}
+                      </span>
+                      <span className="text-xs text-gray-500">
+                        {health.response_time_ms}ms
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-gray-400">未知</span>
+                  )}
+                </TableCell>
                 <TableCell>
                   <pre className="text-xs overflow-hidden max-w-md truncate">
                     {provider.Config}
@@ -296,7 +429,8 @@ export default function ProvidersPage() {
                   </AlertDialog>
                 </TableCell>
               </TableRow>
-            ))}
+              );
+            })}
           </TableBody>
         </Table>
       </div>
@@ -459,12 +593,22 @@ export default function ProvidersPage() {
                 )}
               />
               
+              {validationResult && (
+                <div className={`p-3 rounded ${
+                  validationResult.includes('失败')
+                    ? 'bg-red-50 text-red-800'
+                    : 'bg-green-50 text-green-800'
+                }`}>
+                  {validationResult}
+                </div>
+              )}
+              
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setOpen(false)}>
                   取消
                 </Button>
-                <Button type="submit">
-                  {editingProvider ? "更新" : "创建"}
+                <Button type="submit" disabled={validating}>
+                  {validating ? "验证中..." : (editingProvider ? "更新" : "创建")}
                 </Button>
               </DialogFooter>
             </form>
@@ -547,6 +691,22 @@ export default function ProvidersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 批量删除确认对话框 */}
+      <AlertDialog open={batchDeleteOpen} onOpenChange={setBatchDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确定要批量删除这些提供商吗？</AlertDialogTitle>
+            <AlertDialogDescription>
+              您将删除 {selectedIds.size} 个提供商，此操作无法撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setBatchDeleteOpen(false)}>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={handleBatchDelete}>确认删除</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

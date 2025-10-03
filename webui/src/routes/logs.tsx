@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import Loading from "@/components/loading";
-import { getLogs, getProviders, getModels, type ChatLog, type Provider, type Model, getProviderTemplates } from "@/lib/api";
+import { getLogs, getProviders, getModels, exportLogs, type ChatLog, type Provider, type Model, getProviderTemplates } from "@/lib/api";
 
 // 格式化时间显示，自动选择合适的单位
 // 假设后端返回的时间单位是纳秒
@@ -146,6 +146,17 @@ export default function LogsPage() {
 
   if (loading && logs.length === 0) return <Loading message="加载请求日志" />;
 
+  const handleExport = () => {
+    const downloadUrl = exportLogs({
+      name: modelFilter === "all" ? undefined : modelFilter,
+      provider_name: providerNameFilter === "all" ? undefined : providerNameFilter,
+      status: statusFilter === "all" ? undefined : statusFilter,
+      style: styleFilter === "all" ? undefined : styleFilter,
+      days: 7 // 导出最近7天的数据
+    });
+    window.location.href = downloadUrl;
+  };
+
   return (
     <div className="space-y-6">
       <Card>
@@ -155,7 +166,12 @@ export default function LogsPage() {
               <CardTitle>请求日志</CardTitle>
               <CardDescription>系统处理的请求日志，支持分页和筛选</CardDescription>
             </div>
-            <Button onClick={handleRefresh} className="w-full sm:w-auto">刷新</Button>
+            <div className="flex gap-2">
+              <Button onClick={handleExport} variant="outline" className="w-full sm:w-auto">
+                导出CSV
+              </Button>
+              <Button onClick={handleRefresh} className="w-full sm:w-auto">刷新</Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
