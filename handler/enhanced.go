@@ -756,8 +756,8 @@ func GetRealtimeStats(c *gin.Context) {
 // ImportConfig 导入配置
 func ImportConfig(c *gin.Context) {
 	var config struct {
-		Providers       []models.Provider        `json:"providers"`
-		Models          []models.Model           `json:"models"`
+		Providers       []models.Provider          `json:"providers"`
+		Models          []models.Model             `json:"models"`
 		ModelProviders  []models.ModelWithProvider `json:"model_providers"`
 	}
 

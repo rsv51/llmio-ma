@@ -56,7 +56,6 @@ import {
   getAllProvidersHealth,
   batchDeleteProviders,
   validateProviderConfig,
-  exportConfig,
   importConfig,
   type ImportConfigData
 } from "@/lib/api";
@@ -197,7 +196,14 @@ export default function ProvidersPage() {
         throw new Error(`导出失败: ${response.status}`);
       }
       
-      const blob = await response.blob();
+      const result = await response.json();
+      if (result.code !== 200) {
+        throw new Error(`导出失败: ${result.message}`);
+      }
+      
+      const blob = new Blob([JSON.stringify(result.data, null, 2)], {
+        type: 'application/json'
+      });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
