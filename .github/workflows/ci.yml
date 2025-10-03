@@ -6,8 +6,8 @@ on:
       - main
 
 env:
-  # 使用小写，确保与您的用户名匹配
-  IMAGE_NAME: ${{ lower(github.repository_owner) }}/${{ lower(github.event.repository.name) }}
+  # 移除 lower() 函数，直接使用变量
+  IMAGE_NAME: ${{ github.repository_owner }}/${{ github.event.repository.name }}
 
 jobs:
   docker:
@@ -40,11 +40,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Debug output
-        run: |
-          echo "Image name: ${{ env.IMAGE_NAME }}"
-          echo "Tags: ${{ steps.meta.outputs.tags }}"
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         
@@ -60,5 +55,3 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
