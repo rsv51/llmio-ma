@@ -539,6 +539,7 @@ export function downloadBatchImportTemplate(withSample: boolean = true): string 
   const token = localStorage.getItem("authToken");
   const params = new URLSearchParams();
   if (withSample) params.append('sample', 'true');
+  if (token) params.append('token', token);
   
-  return `/api/config/batch-import/template${params.toString() ? '?' + params.toString() : ''}${token ? (params.toString() ? '&' : '?') + 'token=' + token : ''}`;
+  return `/api/config/batch-import/template${params.toString() ? '?' + params.toString() : ''}`;
 }
